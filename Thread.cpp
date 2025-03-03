@@ -30,21 +30,21 @@ string PURPLE = "\033[1;35m";
 string CYAN = "\033[1;36m";
 string RESET = "\033[0m";
 
-// ===== Глобальные переменные =====
-int currentN = 100;  // Начальный размер матриц (минимум 10x10)
+// ===== Global variables =====
+int currentN = 100;  
 vector<vector<int>> globalA;
 vector<vector<int>> globalB;
 vector<vector<int>> globalC;
 
-// ===== Мьютексы и условные переменные =====
+// ===== Mutexes and condition variables =====
 std::mutex mtx;
 std::condition_variable cv;
-bool matrixReady = false;   // Флаг: новые матрицы готовы к умножению
-int completedMultiplications = 0; // Счётчик завершённых потоков
+bool matrixReady = false;   // Flag: new matrices are ready for multiplication
+int completedMultiplications = 0; // Counter of completed threads
 const int numMultiplicationThreads = 6;
 
-// ===== Функция потока таймера =====
-// Поток, который каждую секунду выводит время, прошедшее с начала умножения.
+// ===== Timer Thread Function =====
+// A stream that prints out the time elapsed since the start of the multiplication every second.
 void timerThreadFunction(std::atomic<bool>& finished, std::chrono::steady_clock::time_point startTime) {
     while (!finished.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -54,23 +54,23 @@ void timerThreadFunction(std::atomic<bool>& finished, std::chrono::steady_clock:
     }
 }
 
-// ===== Функция рабочего потока для умножения =====
-// Каждый поток ждёт сигнала о готовности матриц, затем вычисляет свой диапазон строк результирующей матрицы.
+// ===== Workflow function for multiplication =====
+// Each thread waits for the matrix readiness signal, then calculates its own range of rows of the resulting matrix.
 void multiplicationWorker(int threadId) {
     while (true) {
-        // Ожидание, пока матрицы не будут сгенерированы
+        // Wait until matrices are generated
         {
             std::unique_lock<std::mutex> lock(mtx);
             cv.wait(lock, [] { return matrixReady; });
         }
         int N = currentN;
-        // Разбиение по строкам: делим матрицу на горизонтальные полосы
+        // Row splitting: divide the matrix into horizontal stripes
         int rowsPerThread = N / numMultiplicationThreads;
         int startRow = threadId * rowsPerThread;
         int endRow = (threadId == numMultiplicationThreads - 1) ? N : startRow + rowsPerThread;
 
-        // Наивное умножение матриц: C = A * B
-        // (Для повышения эффективности здесь можно заменить алгоритм на метод с асимптотикой O(n^2.3728596))
+        // Naive matrix multiplication: C = A * B
+        // (To improve efficiency, the algorithm here can be replaced with a method with O(n^2.3728596) asymptotics))
         for (int i = startRow; i < endRow; ++i) {
             for (int j = 0; j < N; ++j) {
                 int sum = 0;
@@ -81,7 +81,7 @@ void multiplicationWorker(int threadId) {
             }
         }
 
-        // Вывод сообщения об окончании работы потока
+        // Output a message about the end of the thread
         {
             std::lock_guard<std::mutex> lock(mtx);
             std::cout << BLUE << "Thread " << threadId
@@ -89,11 +89,11 @@ void multiplicationWorker(int threadId) {
                 << " By " << endRow - 1 << "." << std::endl;
             completedMultiplications++;
             if (completedMultiplications == numMultiplicationThreads) {
-                cv.notify_one(); // Уведомляем главный поток, что все потоки завершили вычисления
+                cv.notify_one(); // Notify the main thread that all threads have completed their computations
             }
         }
 
-        // Ожидание сигнала о начале нового раунда
+        // Waiting for a signal to start a new round
         {
             std::unique_lock<std::mutex> lock(mtx);
             cv.wait(lock, [] { return !matrixReady; });
@@ -102,20 +102,20 @@ void multiplicationWorker(int threadId) {
 }
 
 int main() {
-    // Создаем постоянные потоки для умножения
+    // Create constant streams for multiplication
     vector<std::thread> workers;
     for (int i = 0; i < numMultiplicationThreads; ++i) {
         workers.push_back(std::thread(multiplicationWorker, i));
     }
 
-    // Главный цикл: генерация матриц, умножение, вывод результатов и увеличение размера
+    // Main loop: generate matrices, multiply, print results and increase size
     while (true) {
-        // ===== Генерация матриц (поток-генератор) =====
+        // ===== Matrix generation (stream generator) =====
         {
             std::lock_guard<std::mutex> lock(mtx);
             std::cout << GREEN << "\n Generator: Creating matrices of size "
                 << currentN << "X" << currentN << RESET << std::endl;
-            // Заполняем матрицу A единицами, а B – двойками
+            // Fill matrix A with ones and B with twos
             globalA.assign(currentN, vector<int>(currentN, 1));
             globalB.assign(currentN, vector<int>(currentN, 2));
             globalC.assign(currentN, vector<int>(currentN, 0));
@@ -123,30 +123,30 @@ int main() {
             completedMultiplications = 0;
             matrixReady = true;
         }
-        cv.notify_all(); // Сигнал для рабочих потоков: можно начинать умножение
+        cv.notify_all(); // Signal to worker threads: multiplication can begin
 
-        // ===== Запуск потока таймера =====
+        // ===== Start the timer thread =====
         std::atomic<bool> roundFinished(false);
         auto startTime = std::chrono::steady_clock::now();
         std::thread timerThread(timerThreadFunction, std::ref(roundFinished), startTime);
 
-        // ===== Ожидание завершения всех потоков умножения =====
+        // ===== Wait for all multiplication threads to complete =====
         {
             std::unique_lock<std::mutex> lock(mtx);
             cv.wait(lock, [] { return completedMultiplications == numMultiplicationThreads; });
         }
 
-        // Завершаем работу потока таймера
+        // Terminate the timer thread
         roundFinished.store(true);
         timerThread.join();
 
-        // Подсчет времени выполнения
+        // Calculate execution time
         auto endTime = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed = endTime - startTime;
 
-        // ===== Вывод итогового результата =====
-        int inputElements = currentN * currentN * 2; // Общее число элементов в матрицах A и B
-        int outputElements = currentN * currentN;     // Число элементов в результирующей матрице C
+        // ===== Output the final result =====
+        int inputElements = currentN * currentN * 2; // Total number of elements in matrices A and B
+        int outputElements = currentN * currentN;     // Number of elements in the resulting matrix C
         std::cout << PURPLE << "\n=============================================" << RESET << std::endl;
         std::cout << CYAN << "Calculation complete!" << RESET << std::endl;
         std::cout << CYAN << "Matrix size: " << currentN << "x" << currentN << RESET << std::endl;
@@ -155,21 +155,21 @@ int main() {
         std::cout << CYAN << "Computation time: " << elapsed.count() << " Seconds" << RESET << std::endl;
         std::cout << PURPLE << "=============================================\n" << RESET << std::endl;
 
-        // Сброс флага для следующего раунда (работающие потоки ожидают нового сигнала)
+        // Reset flag for next round (running threads wait for new signal)
         {
             std::lock_guard<std::mutex> lock(mtx);
             matrixReady = false;
         }
-        cv.notify_all(); // Разблокировать потоки, чтобы они перешли в режим ожидания нового раунда
+        cv.notify_all(); // Unblock threads so they can wait for a new round
 
-        // ===== Увеличение размера матриц в геометрической прогрессии =====
+        // ===== Increasing the size of matrices in geometric progression =====
         currentN *= 2;
 
-        // Небольшая задержка между раундами для наглядности
+        // A small delay between rounds for clarity
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
 
-    // Присоединяем рабочие потоки (код недостижим, так как цикл бесконечный, но для завершения программы – хорошая практика)
+    // Attach worker threads (code is unreachable since the loop is infinite, but it's good practice to terminate the program)
     for (auto& worker : workers) {
         worker.join();
     }
